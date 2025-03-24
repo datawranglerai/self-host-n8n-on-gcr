@@ -317,6 +317,42 @@ Finally, to connect n8n with Google services like Sheets:
 
 --- 
 
+## Securing your Deployment using Simple IAM-Based Access Control ##
+
+This method is quick to implement and doesn't require additional infrastructure:
+
+Remove public access from your deployment command:
+
+```bash
+gcloud run deploy n8n \
+    --image=$REGION-docker.pkg.dev/$PROJECT_ID/n8n-repo/n8n:latest \
+    # Other parameters remain unchanged
+    # REMOVE --allow-unauthenticated flag
+    --service-account=n8n-service-account@$PROJECT_ID.iam.gserviceaccount.com
+```
+
+Grant access to specific users:
+
+```bash
+gcloud run services add-iam-policy-binding n8n \
+    --member="user:colleague@yourcompany.com" \
+    --role="roles/run.invoker" \
+    --region=$REGION
+```
+
+Or grant access to your entire organisation:
+
+```bash
+gcloud run services add-iam-policy-binding n8n \
+    --member="domain:yourcompany.com" \
+    --role="roles/run.invoker" \
+    --region=$REGION
+```
+
+With this approach, users will see a Google sign-in page before accessing your n8n instance. This works well but has some limitations with webhook functionality.
+
+---
+
 ## Keeping n8n Updated: Don't Be That Person Running Year-Old Software ##
 
 Updating your n8n deployment is surprisingly straightforward, and it's something you should do regularly to get new features and security patches. Here's how to update when new versions are released:
