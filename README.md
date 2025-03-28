@@ -90,6 +90,10 @@ FROM docker.n8n.io/n8nio/n8n:latest
 COPY startup.sh /
 USER root
 RUN chmod +x /startup.sh
+
+# Ensure volume mount point has correct permissions
+RUN mkdir -p /home/node/.n8n && chown -R node:node /home/node/.n8n
+
 USER node
 EXPOSE 5678
 
@@ -314,6 +318,71 @@ Finally, to connect n8n with Google services like Sheets:
     * Select "OAuth2" as the authentication type
     * Copy your OAuth client ID and client secret from Google Cloud Console
     * Complete the authentication flow
+
+## Step 10: Adding Persistent Storage for Community Nodes ##
+
+One annoying snag with Cloud Run's stateless nature is that any community nodes you install through the n8n UI vanish when your container restarts. This happens because Cloud Run containers are ephemeral - they spin up, do their work, and disappear, taking any filesystem changes with them.
+
+Let's fix that by mounting a Google Cloud Storage bucket to persist your node installations across container restarts. This approach gives you the best of both worlds: serverless deployment with persistent storage.
+
+### 1. Create a Cloud Storage Bucket
+
+First, create a dedicated bucket to store your n8n data:
+
+```bash
+# Create a bucket in the same region as your Cloud Run service
+export BUCKET_NAME="n8n_nodes_storage_bucket"
+gcloud storage buckets create gs://$BUCKET_NAME \
+    --location=$REGION \
+    --uniform-bucket-level-access
+```
+
+The bucket name must be globally unique, so adjust accordingly. I've used underscores here, though hyphens also work fine. The --uniform-bucket-level-access flag simplifies permissions management.
+
+### 2. Grant Your Service Account Access
+
+Your n8n service needs proper permissions to access this bucket:
+
+```bash
+# Grant storage object admin permissions
+gsutil iam ch serviceAccount:n8n-service-account@$PROJECT_ID.iam.gserviceaccount.com:objectAdmin \
+    gs://$BUCKET_NAME
+```
+
+This gives your service account full control over objects (files) in the bucket, which is necessary for n8n to read and write node packages.
+
+### 3. Add the Volume Mount to Your Cloud Run Service
+
+Now configure your Cloud Run service to mount this bucket:
+
+```bash
+gcloud run services update n8n \
+    --region=$REGION \
+    --add-volume=name=n8n-nodes-volume,type=cloud-storage,bucket=$BUCKET_NAME,mount-options="implicit-dirs" \
+    --add-volume-mount=volume=n8n-nodes-volume,mount-path=/home/node/.n8n
+```
+
+The `implicit-dirs` option is crucial here - it allows Cloud Storage FUSE to properly handle directories, which n8n expects when managing node packages.
+
+### Why This Works (And Why It's Needed) ##
+
+When you install a community node through n8n's UI, it creates a directory structure under `/home/node/.n8n/nodes` to store the node packages. Without persistent storage, these installations disappear when your container restarts (which happens automatically when your service is idle).
+
+The volume mount maps your GCS bucket to this directory, ensuring that:
+
+* Node packages are preserved between container restarts
+* You don't have to repeatedly reinstall nodes
+* Your workflows that depend on these nodes continue to function
+
+### Cloud Storage FUSE Considerations ###
+
+This approach uses Cloud Storage FUSE behind the scenes, which has a few limitations to be aware of:
+
+* It's not fully POSIX-compliant, though this doesn't impact n8n's node storage needs
+* There's a small performance overhead compared to local disk
+* The bucket content is cached in memory, which slightly increases your container's memory usage
+
+For n8n community nodes, these tradeoffs are well worth the convenience of persistent storage.
 
 --- 
 
