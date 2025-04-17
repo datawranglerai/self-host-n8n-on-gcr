@@ -358,11 +358,11 @@ Now configure your Cloud Run service to mount this bucket:
 ```bash
 gcloud run services update n8n \
     --region=$REGION \
-    --add-volume=name=n8n-nodes-volume,type=cloud-storage,bucket=$BUCKET_NAME,mount-options="implicit-dirs" \
+    --add-volume=name=n8n-nodes-volume,type=cloud-storage,bucket=$BUCKET_NAME \
     --add-volume-mount=volume=n8n-nodes-volume,mount-path=/home/node/.n8n
 ```
 
-The `implicit-dirs` option is crucial here - it allows Cloud Storage FUSE to properly handle directories, which n8n expects when managing node packages.
+Google Cloud Run automatically enables implicit directories for Cloud Storage mounts without needing any additional configuration.
 
 ### Why This Works (And Why It's Needed) ##
 
