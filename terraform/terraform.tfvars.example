@@ -2,17 +2,18 @@
 # Rename this to terraform.tfvars and fill in the sensitive values.
 
 # --- Required --- #
-db_password        = "YOUR_SECURE_DB_PASSWORD"
-n8n_encryption_key = "YOUR_VERY_LONG_RANDOM_ENCRYPTION_KEY"
+db_password                   = "YOUR_SECURE_DB_PASSWORD"
+n8n_encryption_key            = "YOUR_VERY_LONG_RANDOM_ENCRYPTION_KEY"
+terraform_state_bucket_name = n8n-instance-production-terraform-state" # Replace with a globally unique name, e.g., n8n-instance-production-terraform-state
 
 # --- Optional (Defaults are likely suitable based on your setup) --- #
-# gcp_project_id = "allie-n8n"
+# gcp_project_id = "n8n-instance-ygg"
 # gcp_region     = "us-west2"
 # db_name        = "n8n"
 # db_user        = "n8n-user"
 # db_tier        = "db-f1-micro"
 # db_storage_size = 10
-# artifact_repo_name = "allie-n8n"
+# artifact_repo_name = "n8n-instance-ygg"
 # cloud_run_service_name = "n8n"
 # service_account_name = "n8n-service-account"
 # cloud_run_cpu = "2"

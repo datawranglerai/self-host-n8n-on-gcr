@@ -93,3 +93,9 @@ variable "generic_timezone" {
   type        = string
   default     = "UTC" # As per the working config
 }
+
+variable "terraform_state_bucket_name" {
+  type        = string
+  description = "The GCS bucket name where Terraform state will be stored. This is read by the deploy script and passed to 'terraform init -backend-config'."
+  # No default is provided here as the deploy.sh script handles sourcing it.
+}

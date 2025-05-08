@@ -5,6 +5,12 @@ terraform {
       version = ">= 4.0"
     }
   }
+  backend "gcs" {
+    # The bucket name will be configured dynamically during 'terraform init'
+    # using -backend-config="bucket=<your_bucket_name>"
+    # The prefix helps organize state files if the bucket is used for multiple projects/environments.
+    prefix = "n8n-instance/state"
+  }
 }
 
 provider "google" {
