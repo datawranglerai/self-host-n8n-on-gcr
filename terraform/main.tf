@@ -195,16 +195,9 @@ resource "google_cloud_run_v2_service" "n8n" {
     containers {
       image = local.n8n_image
       
-      # Add command override for official image (Option A)
-      dynamic "args" {
-        for_each = var.use_custom_image ? [] : [1]
-        content {
-          args = ["-c", "sleep 5; n8n start"]
-        }
-      }
-      
-      # Set command for official image (Option A)
+      # Set command and args for official image (Option A)
       command = var.use_custom_image ? null : ["/bin/sh"]
+      args    = var.use_custom_image ? null : ["-c", "sleep 5; n8n start"]
       
       volume_mounts {
         name       = "cloudsql"
