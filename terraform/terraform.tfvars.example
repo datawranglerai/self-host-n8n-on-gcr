@@ -5,10 +5,13 @@
 # gcp_project_id = "your-project-id"
 # gcp_region     = "us-west2"
 
-# db_name        = "n8n"
-# db_user        = "n8n-user"
-# db_tier        = "db-f1-micro"
-# db_storage_size = 10
+# supabase_project_id = "fntxqktsjigrerxaffrd"
+# supabase_db_password = "your-supabase-db-password"
+# supabase_db_host_prefix = "aws-0"
+# supabase_db_ssl_ca   = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"
+
+# db_name        = "postgres"
+# db_user        = "postgres"
 
 # use_custom_image = false
 # artifact_repo_name = "n8n-repo"

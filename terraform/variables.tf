@@ -15,28 +15,39 @@ variable "use_custom_image" {
   default     = false
 }
 
-variable "db_name" {
-  description = "Name for the Cloud SQL database."
+variable "supabase_project_id" {
+  description = "Supabase Project ID (e.g., fntxqktsjigrerxaffrd)."
   type        = string
-  default     = "n8n"
+}
+
+variable "supabase_db_password" {
+  description = "Supabase Database Password."
+  type        = string
+  sensitive   = true
+}
+
+variable "supabase_db_ssl_ca" {
+  description = "Supabase Database SSL CA certificate content."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "supabase_db_host_prefix" {
+  description = "Supabase Database Host Prefix (e.g., aws-0-us-east-1). Find this in the Supabase Dashboard > Settings > Database > Connection String > Transaction Pooler."
+  type        = string
+}
+
+variable "db_name" {
+  description = "Name for the database (default for Supabase is 'postgres')."
+  type        = string
+  default     = "postgres"
 }
 
 variable "db_user" {
-  description = "Username for the Cloud SQL database user."
+  description = "Username for the database (default for Supabase is 'postgres')."
   type        = string
-  default     = "n8n-user"
-}
-
-variable "db_tier" {
-  description = "Cloud SQL instance tier."
-  type        = string
-  default     = "db-f1-micro"
-}
-
-variable "db_storage_size" {
-  description = "Cloud SQL instance storage size in GB."
-  type        = number
-  default     = 10
+  default     = "postgres"
 }
 
 variable "artifact_repo_name" {
@@ -85,4 +96,28 @@ variable "generic_timezone" {
   description = "Timezone for n8n."
   type        = string
   default     = "UTC"
+}
+
+variable "gotenberg_service_name" {
+  description = "Name for the Gotenberg Cloud Run service."
+  type        = string
+  default     = "gotenberg"
+}
+
+variable "gotenberg_image" {
+  description = "Docker image for Gotenberg."
+  type        = string
+  default     = "gotenberg/gotenberg:8-cloudrun"
+}
+
+variable "gotenberg_memory" {
+  description = "Memory allocation for Gotenberg service (minimum 1Gi recommended)."
+  type        = string
+  default     = "1Gi"
+}
+
+variable "gotenberg_cpu" {
+  description = "CPU allocation for Gotenberg service."
+  type        = string
+  default     = "1"
 }
