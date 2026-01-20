@@ -16,10 +16,18 @@
 # use_custom_image = false
 # artifact_repo_name = "n8n-repo"
 
+# gotenberg_service_name = "gotenberg"
+# gotenberg_memory       = "1Gi"
+# gotenberg_cpu          = "1"
+
+# Gotenberg Basic Authentication
+# gotenberg_basic_auth_username = "your_username"
+# gotenberg_basic_auth_password = "your_password"
+
 # cloud_run_service_name = "n8n"
 # service_account_name = "n8n-service-account"
 # cloud_run_cpu = "2"
 # cloud_run_memory = "2Gi"
 # cloud_run_max_instances = 1
 # cloud_run_container_port = 5678
-# generic_timezone = "UTC" 
+# generic_timezone = "UTC"

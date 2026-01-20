@@ -121,3 +121,16 @@ variable "gotenberg_cpu" {
   type        = string
   default     = "1"
 }
+
+variable "gotenberg_basic_auth_username" {
+  description = "Username for Gotenberg basic authentication."
+  type        = string
+  default     = ""
+}
+
+variable "gotenberg_basic_auth_password" {
+  description = "Password for Gotenberg basic authentication."
+  type        = string
+  default     = ""
+  sensitive   = true
+}

@@ -318,6 +318,30 @@ resource "google_cloud_run_v2_service" "gotenberg" {
           memory = var.gotenberg_memory
         }
       }
+
+      dynamic "env" {
+        for_each = var.gotenberg_basic_auth_username != "" && var.gotenberg_basic_auth_password != "" ? [1] : []
+        content {
+          name  = "API_ENABLE_BASIC_AUTH"
+          value = "true"
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.gotenberg_basic_auth_username != "" && var.gotenberg_basic_auth_password != "" ? [1] : []
+        content {
+          name  = "GOTENBERG_API_BASIC_AUTH_USERNAME"
+          value = var.gotenberg_basic_auth_username
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.gotenberg_basic_auth_username != "" && var.gotenberg_basic_auth_password != "" ? [1] : []
+        content {
+          name  = "GOTENBERG_API_BASIC_AUTH_PASSWORD"
+          value = var.gotenberg_basic_auth_password
+        }
+      }
     }
   }
 
