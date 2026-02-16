@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "tmuxer": "^0.0.4"
+  }
+}

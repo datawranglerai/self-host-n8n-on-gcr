@@ -302,6 +302,7 @@ resource "google_cloud_run_v2_service" "gotenberg" {
   deletion_protection = false
 
   template {
+    max_instance_request_concurrency = 1
     scaling {
       max_instance_count = 1
       min_instance_count = 0
@@ -317,6 +318,7 @@ resource "google_cloud_run_v2_service" "gotenberg" {
           cpu    = var.gotenberg_cpu
           memory = var.gotenberg_memory
         }
+        cpu_idle = true
       }
 
       dynamic "env" {
