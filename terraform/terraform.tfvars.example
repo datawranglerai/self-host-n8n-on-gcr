@@ -1,22 +1,75 @@
 # Example terraform.tfvars file
-# Rename this to terraform.tfvars and fill in the sensitive values.
+# Rename this to terraform.tfvars and fill in your values.
+# Only gcp_project_id is required; everything else has a sensible default.
 
-# --- Optional (Defaults are likely suitable based on your setup) --- #
+# ===========================================================================
+# Required
+# ===========================================================================
+
 # gcp_project_id = "your-project-id"
-# gcp_region     = "us-west2"
 
-# db_name        = "n8n"
-# db_user        = "n8n-user"
-# db_tier        = "db-f1-micro"
-# db_storage_size = 10
+# ===========================================================================
+# Common optional settings
+# ===========================================================================
 
-# use_custom_image = false
-# artifact_repo_name = "n8n-repo"
+# gcp_region     = "us-west2"       # Change to your preferred region
 
-# cloud_run_service_name = "n8n"
-# service_account_name = "n8n-service-account"
-# cloud_run_cpu = "2"
-# cloud_run_memory = "2Gi"
-# cloud_run_max_instances = 1
+# db_name         = "n8n"
+# db_user         = "n8n-user"
+# db_tier         = "db-f1-micro"   # Upgrade to db-g1-small for heavier loads
+# db_storage_size = 10              # GB
+
+# use_custom_image   = false        # Set true to use Option B (custom Docker image)
+# artifact_repo_name = "n8n-repo"   # Only relevant if use_custom_image = true
+
+# cloud_run_service_name   = "n8n"
+# service_account_name     = "n8n-service-account"
+# cloud_run_cpu            = "1"
+# cloud_run_memory         = "2Gi"
+# cloud_run_max_instances  = 1
 # cloud_run_container_port = 5678
-# generic_timezone = "UTC" 
+# generic_timezone         = "UTC"
+
+# ===========================================================================
+# Queue Mode — set enable_queue_mode = true to activate
+# ===========================================================================
+# Queue Mode separates workflow execution from the main UI/API process.
+# The main Cloud Run service handles webhooks, the editor, and the REST API.
+# A separate worker Cloud Run service processes workflow executions.
+# Cloud Memorystore (Redis) acts as the job queue between them.
+#
+# Additional resources provisioned when enable_queue_mode = true:
+#   - Cloud Memorystore Redis instance (private, VPC-peered)
+#   - Cloud Run worker service (internal ingress, min 1 instance)
+#   - Redis AUTH secret in Secret Manager
+#   - VPC Direct Egress on both Cloud Run services
+#   - redis.googleapis.com and compute.googleapis.com APIs enabled
+# ===========================================================================
+
+# enable_queue_mode = false
+
+# --- VPC networking (required for Memorystore access) ---
+# Memorystore instances are only reachable via a private IP within the
+# authorised VPC. Cloud Run uses Direct VPC Egress to reach them.
+# Use "default" for the auto-mode default VPC, or a custom network name.
+#
+# vpc_network    = "default"
+# vpc_subnetwork = ""   # Leave empty to let Cloud Run pick a subnet automatically.
+#                       # For the default auto-mode network this works out of the box.
+#                       # For custom networks, specify the subnetwork name explicitly.
+
+# --- Redis ---
+# BASIC tier: single node, no replication. Cheapest; fine for dev/personal use.
+# STANDARD_HA: replicated, high-availability. Recommended for production.
+#
+# redis_tier         = "BASIC"
+# redis_memory_size_gb = 1
+
+# --- Worker scaling ---
+# Workers must always have at least one instance running to pick up jobs.
+# Scale max_instances up if you run many concurrent heavy workflows.
+#
+# worker_min_instances = 1
+# worker_max_instances = 3
+# worker_cpu           = "1"
+# worker_memory        = "2Gi"

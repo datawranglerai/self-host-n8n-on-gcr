@@ -10,7 +10,9 @@ This guide walks you through deploying n8n (that powerful workflow automation pl
 - [Quick Start with Terraform](#terraform-deployment-option)
 - [Manual Step-by-Step Guide](#step-1-set-up-your-google-cloud-project)
 - [Configuration](#step-8-configure-n8n-for-oauth-with-google-services)
+- [Queue Mode Deployment](#queue-mode-deployment-scaling-n8n-for-production)
 - [Updates & Maintenance](#keeping-n8n-updated-dont-be-that-person-running-year-old-software)
+- [Cost Estimates](#cost-estimates-yes-it-really-can-be-that-cheap)
 - [Troubleshooting](#troubleshooting)
 
 ## Overview ##
@@ -409,7 +411,193 @@ Finally, to connect n8n with Google services like Sheets:
     * Copy your OAuth client ID and client secret from Google Cloud Console
     * Complete the authentication flow
 
---- 
+---
+
+## Queue Mode Deployment: Scaling n8n for Production ##
+
+The steps above give you a solid single-process n8n deployment. For most personal and small-team setups, that's all you'll ever need. But if you start running many concurrent heavy workflows, or if you want to keep the editor responsive while long-running workflows execute in the background, **Queue Mode** is the answer.
+
+### What is Queue Mode? ###
+
+In regular mode, the n8n process handles everything: serving the UI, processing API calls, receiving webhooks, *and* executing every workflow. Queue Mode splits those responsibilities:
+
+```
+Internet
+    │
+    ▼
+Cloud Run — n8n main       ← Serves the editor UI, REST API, and webhooks
+    │  enqueues jobs into
+    ▼
+Cloud Memorystore (Redis)  ← Job queue / message broker
+    │  workers poll
+    ▼
+Cloud Run — n8n worker × N ← Executes workflow jobs
+    │  reads/writes
+    ▼
+Cloud SQL (PostgreSQL)     ← Shared database for both main and workers
+```
+
+The main process no longer runs workflows directly. It puts them onto a Redis queue and immediately returns to handling new requests. Workers continuously poll that queue and run executions to completion. The result: a responsive editor even while CPU-intensive workflows are running, and independent horizontal scaling of execution capacity.
+
+### When Should You Use Queue Mode? ###
+
+**Stick with regular mode if:**
+- You're running n8n for personal automation on a light-to-moderate workload
+- Cost is a priority (Queue Mode adds ~£50–£70/month for Redis + always-on workers)
+- Your workflows are mostly quick webhook-triggered tasks
+
+**Switch to Queue Mode if:**
+- You have many concurrent long-running or CPU-intensive workflows
+- The n8n editor becomes unresponsive during heavy workflow runs
+- You want to scale execution capacity independently of the UI
+- You're running n8n for a team and need reliable throughput
+
+### Additional Prerequisites ###
+
+Queue Mode requires:
+- The `redis.googleapis.com` and `compute.googleapis.com` APIs enabled
+- A VPC network in your project (the default auto-mode VPC is fine)
+- The VPC's **Private Service Access** peering range available (used by Cloud Memorystore)
+
+Cloud Memorystore Redis instances are only reachable via a **private VPC IP address** — they have no public endpoint. Cloud Run connects to them through **Direct VPC Egress**, which routes private-range traffic (`10.x.x.x`, `172.16.x.x`, `192.168.x.x`) through the VPC while leaving public internet traffic on the normal path.
+
+### Step QM-1: Enable Additional APIs ###
+
+```bash
+gcloud services enable redis.googleapis.com
+gcloud services enable compute.googleapis.com
+```
+
+### Step QM-2: Create a Cloud Memorystore Redis Instance ###
+
+```bash
+export REDIS_NAME="n8n-redis"
+
+# Create a Redis instance — BASIC tier, 1 GB, Redis 7.2 with AUTH enabled
+gcloud redis instances create $REDIS_NAME \
+    --region=$REGION \
+    --tier=BASIC \
+    --size=1 \
+    --redis-version=redis_7_2 \
+    --network=default \
+    --enable-auth
+
+# Retrieve the private IP, port, and AUTH string
+export REDIS_HOST=$(gcloud redis instances describe $REDIS_NAME \
+    --region=$REGION --format="value(host)")
+export REDIS_PORT=$(gcloud redis instances describe $REDIS_NAME \
+    --region=$REGION --format="value(port)")
+export REDIS_AUTH=$(gcloud redis instances get-auth-string $REDIS_NAME \
+    --region=$REGION --format="value(authString)")
+
+echo "Redis host: $REDIS_HOST"
+echo "Redis port: $REDIS_PORT"
+```
+
+> **Tier guidance:**
+> - `BASIC` — single node, no replication. Cheapest (~£35/month for 1 GB). Fine for personal use; if Redis restarts you'll lose any in-flight execution jobs (they'll need to be re-triggered).
+> - `STANDARD_HA` — primary + replica with automatic failover. Higher availability for production workloads (~£70/month for 1 GB).
+
+> **Networking note:** `--network=default` peers the Memorystore instance into the default VPC. Replace with your custom VPC name if you're not using the default network.
+
+### Step QM-3: Store the Redis AUTH String in Secret Manager ###
+
+```bash
+# Store the Redis AUTH string
+echo -n "$REDIS_AUTH" | \
+    gcloud secrets create n8n-redis-auth \
+    --data-file=- \
+    --replication-policy="automatic"
+
+# Grant the n8n service account access to the secret
+gcloud secrets add-iam-policy-binding n8n-redis-auth \
+    --member="serviceAccount:n8n-service-account@$PROJECT_ID.iam.gserviceaccount.com" \
+    --role="roles/secretmanager.secretAccessor"
+```
+
+### Step QM-4: Update the Main n8n Service for Queue Mode ###
+
+The main service needs three additions: `EXECUTIONS_MODE=queue` to activate queue mode, Redis connection details to know where the queue is, and Direct VPC Egress so it can actually reach the Memorystore private IP.
+
+```bash
+gcloud run services update n8n \
+    --region=$REGION \
+    --vpc-egress=private-ranges-only \
+    --network=default \
+    --subnet=default \
+    --update-env-vars="EXECUTIONS_MODE=queue,QUEUE_BULL_REDIS_HOST=$REDIS_HOST,QUEUE_BULL_REDIS_PORT=$REDIS_PORT" \
+    --update-secrets="QUEUE_BULL_REDIS_PASSWORD=n8n-redis-auth:latest"
+```
+
+> **Subnet note:** For the default auto-mode VPC, `--subnet=default` selects the regional subnet automatically. If you use a custom VPC specify the exact subnet name for your region (e.g., `--subnet=my-subnet`).
+
+### Step QM-5: Deploy the n8n Worker Service ###
+
+Workers run the `n8n worker` command instead of `n8n start`. They do not serve public internet traffic — they poll Redis and connect to Cloud SQL.
+
+```bash
+gcloud run deploy n8n-worker \
+    --image=docker.io/n8nio/n8n:latest \
+    --command="/bin/sh" \
+    --args="-c,sleep 5; n8n worker" \
+    --platform=managed \
+    --region=$REGION \
+    --no-allow-unauthenticated \
+    --ingress=internal \
+    --port=5678 \
+    --cpu=1 \
+    --memory=2Gi \
+    --min-instances=1 \
+    --max-instances=3 \
+    --no-cpu-throttling \
+    --vpc-egress=private-ranges-only \
+    --network=default \
+    --subnet=default \
+    --set-env-vars="EXECUTIONS_MODE=queue,DB_TYPE=postgresdb,DB_POSTGRESDB_DATABASE=n8n,DB_POSTGRESDB_USER=n8n-user,DB_POSTGRESDB_HOST=/cloudsql/$SQL_CONNECTION,DB_POSTGRESDB_PORT=5432,DB_POSTGRESDB_SCHEMA=public,N8N_USER_FOLDER=/home/node/.n8n,GENERIC_TIMEZONE=UTC,QUEUE_HEALTH_CHECK_ACTIVE=true,N8N_RUNNERS_ENABLED=true,QUEUE_BULL_REDIS_HOST=$REDIS_HOST,QUEUE_BULL_REDIS_PORT=$REDIS_PORT" \
+    --set-secrets="DB_POSTGRESDB_PASSWORD=n8n-db-password:latest,N8N_ENCRYPTION_KEY=n8n-encryption-key:latest,QUEUE_BULL_REDIS_PASSWORD=n8n-redis-auth:latest" \
+    --add-cloudsql-instances=$SQL_CONNECTION \
+    --service-account=n8n-service-account@$PROJECT_ID.iam.gserviceaccount.com
+```
+
+**Key worker settings explained:**
+
+| Setting | Value | Why |
+|---|---|---|
+| `--ingress=internal` | internal | Workers receive no public HTTP traffic — internal only |
+| `--no-allow-unauthenticated` | — | Workers should not be publicly invokeable |
+| `--min-instances=1` | 1 | At least one worker must always be running or queued jobs never start |
+| `--no-cpu-throttling` | — | Workers poll Redis continuously and need CPU between "requests" |
+| `EXECUTIONS_MODE=queue` | queue | Tells the worker process to pick up jobs from Redis |
+
+### Queue Mode Environment Variables Reference ###
+
+| Variable | Main Service | Worker | Description |
+|---|---|---|---|
+| `EXECUTIONS_MODE` | `queue` | `queue` | Activates queue mode. Workers won't run without this. |
+| `QUEUE_BULL_REDIS_HOST` | Redis private IP | Redis private IP | Host of the Memorystore instance |
+| `QUEUE_BULL_REDIS_PORT` | `6379` | `6379` | Redis port (Memorystore default) |
+| `QUEUE_BULL_REDIS_PASSWORD` | (from secret) | (from secret) | AUTH string stored in Secret Manager |
+| `QUEUE_HEALTH_CHECK_ACTIVE` | `true` | `true` | Exposes `/healthz` — required by Cloud Run health checks |
+| `N8N_RUNNERS_ENABLED` | `true` | `true` | Enables the task runner subsystem (required in n8n ≥ 1.x) |
+
+### Scaling Workers ###
+
+One of the main benefits of Queue Mode is being able to add execution capacity without touching the main service. If workflows are backing up in the queue:
+
+```bash
+# Increase the maximum number of worker instances
+gcloud run services update n8n-worker \
+    --region=$REGION \
+    --max-instances=10
+```
+
+Cloud Run scales workers up toward `max-instances` as load increases. For lower cold-start latency on the worker tier, consider bumping `min-instances` to 2.
+
+### Verifying Queue Mode is Working ###
+
+After deploying, open the n8n editor and navigate to **Settings → Workers** (n8n ≥ 1.x). You should see your worker instances listed there. If the list is empty or workers show as disconnected, check the [Queue Mode troubleshooting](#queue-mode-issues) section below.
+
+---
 
 ## Keeping n8n Updated: Don't Be That Person Running Year-Old Software ##
 
@@ -437,6 +625,16 @@ gcloud run services update n8n \
 
 Cloud Run will pull the new image and deploy it automatically. Takes about 1-2 minutes.
 
+**If you're using Queue Mode**, update the worker service too:
+
+```bash
+gcloud run services update n8n-worker \
+    --image=docker.io/n8nio/n8n:latest \
+    --region=$REGION
+```
+
+It's important that the main service and all workers run the **same n8n version**. Mixed versions in queue mode can cause queue protocol mismatches.
+
 ### For Option B (Custom Image)
 
 ### Method 1: Rebuild and Redeploy (The Clean Way) ###
@@ -453,6 +651,11 @@ docker push $REGION-docker.pkg.dev/$PROJECT_ID/n8n-repo/n8n:latest
 
 # Redeploy your Cloud Run service
 gcloud run services update n8n \
+    --image=$REGION-docker.pkg.dev/$PROJECT_ID/n8n-repo/n8n:latest \
+    --region=$REGION
+
+# If using Queue Mode, update workers too
+gcloud run services update n8n-worker \
     --image=$REGION-docker.pkg.dev/$PROJECT_ID/n8n-repo/n8n:latest \
     --region=$REGION
 ```
@@ -519,6 +722,8 @@ Regular updates keep your instance secure and give you access to new nodes and f
 
 Let's talk money. One of the main reasons to use this setup is cost efficiency. This way of self-hosting is cheaper than the much more documented Kubernetes approach, and at most, half the price of n8n's lowest paid tier. Here's what you can expect to pay monthly:
 
+### Regular Mode (Default) ###
+
 **Google Cloud SQL (db-f1-micro)**: About £8.00 if running constantly. This is your main cost driver - a basic PostgreSQL instance that's plenty powerful for personal use.
 
 **Google Cloud Run**: Practically free for light usage thanks to the generous free tier:
@@ -533,9 +738,19 @@ With our configuration setting min-instances=0, your n8n container shuts down co
 
 **Secret Manager, Artifact Registry**, etc.: These additional services all have free tiers that you'll likely stay within.
 
-**Total expected monthly cost**: £2-£12
+**Total expected monthly cost (regular mode)**: £2–£12
 
-The beauty of this setup is that costs scale with usage. If you're just running a few workflows that trigger occasionally, you'll stay at the lower end. If you're constantly hammering the system with heavy workflows, you might go beyond the free tier and see costs rise.
+### Queue Mode Additional Costs ###
+
+Queue Mode adds persistent infrastructure that does **not** scale to zero:
+
+**Cloud Memorystore Redis (BASIC, 1 GB)**: ~£35–£45/month. Redis runs continuously and is your largest Queue Mode cost.
+
+**n8n Worker (Cloud Run Service, min 1 instance)**: Workers are kept alive with `min-instances=1` and `--no-cpu-throttling`, so they bill continuously. At 1 vCPU + 2 GiB in most regions: ~£15–£25/month.
+
+**Total expected monthly cost (queue mode)**: ~£55–£80
+
+Queue Mode is worth it when you're running n8n heavily enough that the extra capacity and responsiveness justify the cost. For light personal use, regular mode is the better choice by a wide margin.
 
 #### How to Keep Costs Down ####
 
@@ -546,6 +761,8 @@ The beauty of this setup is that costs scale with usage. If you're just running 
 * **Monitor your usage**: Google Cloud provides excellent usage dashboards - check them regularly during your first month to understand your consumption patterns.
 
 * **Set budget alerts**: Configure budget alerts in Google Cloud to notify you if spending exceeds your threshold.
+
+* **Queue Mode sizing**: In Queue Mode, start with 1 worker instance and only scale `max-instances` up if you actually see execution backpressure. Over-provisioning workers is the quickest way to inflate your bill.
 
 What could push costs higher? Running CPU-intensive workflows frequently, storing large amounts of data in PostgreSQL, or configuring your instance with more resources than necessary.
 
@@ -588,6 +805,45 @@ When things inevitably go sideways, here are the most common issues and how to f
     * Use `WEBHOOK_URL` instead of `N8N_WEBHOOK_URL` for newer n8n versions
   
     * Add proxy hop configurations by including `N8N_PROXY_HOPS=1` as Cloud Run acts as a reverse proxy
+
+### Queue Mode Issues ###
+
+5. Workers Not Appearing in n8n Settings → Workers:
+
+    * Confirm both the main service and workers have `EXECUTIONS_MODE=queue` set
+    
+    * Verify `QUEUE_BULL_REDIS_HOST` and `QUEUE_BULL_REDIS_PORT` are set correctly on both services — the host must be the private IP of the Memorystore instance, not a hostname or public address
+    
+    * Check that `QUEUE_BULL_REDIS_PASSWORD` is being injected correctly from Secret Manager — a missing or wrong AUTH string will cause silent connection failures
+    
+    * Confirm both Cloud Run services have Direct VPC Egress enabled (`--vpc-egress=private-ranges-only`) and are using the same VPC network as the Memorystore instance
+
+6. Executions Stuck in "Waiting" State:
+
+    * This means jobs are being enqueued but no worker is picking them up
+    
+    * Check worker Cloud Run service logs for Redis connection errors
+    
+    * Ensure `--min-instances=1` is set on the worker service — if workers have scaled to zero, jobs will wait indefinitely
+    
+    * Verify the worker is running `n8n worker` (not `n8n start`) — check the command override
+
+7. "Could not connect to Redis" Errors in Logs:
+
+    * Confirm the Memorystore instance is in the same VPC network as the Cloud Run services
+    
+    * Verify Direct VPC Egress is configured on the failing Cloud Run service
+    
+    * Check that the `redis.googleapis.com` and `compute.googleapis.com` APIs are enabled
+    
+    * Try fetching the Redis host IP directly: `gcloud redis instances describe n8n-redis --region=$REGION --format="value(host)"` and confirm it matches what's in the environment variable
+
+8. VPC Egress Causing Outbound Connectivity Issues:
+
+    * The `private-ranges-only` egress setting routes only `10.x.x.x`, `172.16.x.x`, and `192.168.x.x` traffic through the VPC — all other traffic (including external API calls from your workflows) still uses the normal internet path, so this should not affect most workflows
+    
+    * If you do see connectivity problems with external services, double-check that you used `private-ranges-only` and not `all-traffic`
+
 ---
 
 ## Terraform Deployment Option
@@ -641,6 +897,69 @@ Or in `terraform.tfvars`:
 use_custom_image = true  # Only if you want custom image
 ```
 
+### Terraform Queue Mode Deployment ###
+
+The Terraform configuration supports Queue Mode through a single feature flag. When `enable_queue_mode = true`, Terraform will additionally provision:
+
+- A **Cloud Memorystore Redis** instance (private, VPC-peered)
+- A **Cloud Run worker service** (`n8n-worker`) with internal ingress and min 1 instance
+- A **Redis AUTH secret** in Secret Manager
+- **Direct VPC Egress** on both Cloud Run services
+- The `redis.googleapis.com` and `compute.googleapis.com` APIs
+
+#### Enable Queue Mode via CLI flag:
+
+```bash
+terraform apply -var="enable_queue_mode=true"
+```
+
+#### Or in `terraform.tfvars`:
+
+```hcl
+gcp_project_id    = "your-project-id"
+enable_queue_mode = true
+
+# Optional: tune Redis and worker sizing
+redis_tier           = "BASIC"       # or "STANDARD_HA" for production
+redis_memory_size_gb = 1
+worker_min_instances = 1
+worker_max_instances = 3
+worker_cpu           = "1"
+worker_memory        = "2Gi"
+
+# Optional: specify VPC network/subnet if not using the default VPC
+# vpc_network    = "default"
+# vpc_subnetwork = ""   # Leave empty for auto-selection
+```
+
+Then run:
+
+```bash
+terraform plan -var-file=terraform.tfvars
+terraform apply -var-file=terraform.tfvars
+```
+
+Terraform will output:
+- `cloud_run_service_url` — the public n8n editor URL
+- `cloud_run_worker_service_url` — the worker service's internal URL (not publicly accessible)
+- `redis_host` — the private IP of the Memorystore instance
+- `redis_port` — the Redis port
+- `cloud_sql_connection_name` — the Cloud SQL connection name
+
+> **Note on provisioning time:** Cloud Memorystore instances take 5–10 minutes to provision. Terraform will wait for the instance to be ready before creating the worker service. The overall `terraform apply` for a Queue Mode deployment typically takes 15–20 minutes.
+
+#### Upgrading an Existing Deployment to Queue Mode ####
+
+If you've already deployed the standard (non-queue) setup with Terraform and want to add Queue Mode, simply add `enable_queue_mode = true` to your `terraform.tfvars` and run `terraform apply` again. Terraform will add the new resources incrementally without touching the existing ones.
+
+```bash
+# Add to existing terraform.tfvars
+echo 'enable_queue_mode = true' >> terraform.tfvars
+
+terraform plan   # Review what will be added
+terraform apply  # Apply the changes
+```
+
 ### Terraform Troubleshooting ###
 
 If you're encountering issues with Terraform deployment, especially after a previous manual installation attempt or a failed Terraform run, you may need to clean up existing resources first.
@@ -679,6 +998,7 @@ gcloud sql instances delete n8n-db
 ```bash
 gcloud secrets delete n8n-db-password
 gcloud secrets delete n8n-encryption-key
+gcloud secrets delete n8n-redis-auth  # Queue Mode only
 ```
 
 **Service Account:**
@@ -687,14 +1007,21 @@ gcloud secrets delete n8n-encryption-key
 gcloud iam service-accounts delete n8n-service-account@$PROJECT_ID.iam.gserviceaccount.com
 ```
 
-**Cloud Run Service:**
+**Cloud Run Services:**
 
 ```bash
 gcloud run services delete n8n --region=$REGION
+gcloud run services delete n8n-worker --region=$REGION  # Queue Mode only
+```
+
+**Cloud Memorystore Redis (Queue Mode only):**
+
+```bash
+gcloud redis instances delete n8n-redis --region=$REGION
 ```
 
 3. **Alternative: Use Google Cloud Console**
-- Navigate to each service (Cloud Run, Cloud SQL, Secret Manager, IAM, Artifact Registry)
+- Navigate to each service (Cloud Run, Cloud SQL, Memorystore, Secret Manager, IAM, Artifact Registry)
 - Identify and delete resources with names matching the Terraform configuration
 - This visual approach can be easier for identifying partially-created resources
 

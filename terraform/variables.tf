@@ -86,3 +86,95 @@ variable "generic_timezone" {
   type        = string
   default     = "UTC"
 }
+
+# ---------------------------------------------------------------------------
+# Queue Mode variables
+# These are only required when enable_queue_mode = true.
+# ---------------------------------------------------------------------------
+
+variable "enable_queue_mode" {
+  description = <<-EOT
+    Set to true to enable n8n Queue Mode.
+    This provisions a Cloud Memorystore (Redis) instance, configures VPC
+    Direct VPC Egress on Cloud Run, and deploys a separate n8n worker
+    Cloud Run Service to process workflow executions.
+    Requires the default (or specified) VPC network to be available in the
+    project and the redis.googleapis.com API to be enabled.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "vpc_network" {
+  description = <<-EOT
+    Name of the VPC network used for Cloud Memorystore (Redis) and Cloud Run
+    Direct VPC Egress. Only used when enable_queue_mode = true.
+    The Memorystore instance will be peered into this network.
+    Use "default" for the auto-mode default VPC, or provide a custom network name.
+  EOT
+  type        = string
+  default     = "default"
+}
+
+variable "vpc_subnetwork" {
+  description = <<-EOT
+    Name of the VPC subnetwork for Cloud Run Direct VPC Egress.
+    Only used when enable_queue_mode = true.
+    Leave empty ("") to let Cloud Run automatically select a subnet in the
+    specified vpc_network. For the default auto-mode network this is usually
+    fine. If you use a custom network you may need to specify the subnet
+    explicitly (e.g. the subnetwork name matches the region for default VPC).
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "redis_tier" {
+  description = <<-EOT
+    Cloud Memorystore Redis service tier.
+    BASIC   – single node, no replication, lowest cost. Suitable for dev/low-traffic.
+    STANDARD_HA – high-availability with replication replica. Recommended for production.
+    Only used when enable_queue_mode = true.
+  EOT
+  type        = string
+  default     = "BASIC"
+  validation {
+    condition     = contains(["BASIC", "STANDARD_HA"], var.redis_tier)
+    error_message = "redis_tier must be BASIC or STANDARD_HA."
+  }
+}
+
+variable "redis_memory_size_gb" {
+  description = "Memory size in GB for the Cloud Memorystore Redis instance. Only used when enable_queue_mode = true."
+  type        = number
+  default     = 1
+}
+
+variable "worker_min_instances" {
+  description = <<-EOT
+    Minimum number of n8n worker instances to keep running.
+    Workers are long-running processes that poll Redis for queued executions.
+    Set to at least 1 so there is always capacity to pick up jobs.
+    Only used when enable_queue_mode = true.
+  EOT
+  type        = number
+  default     = 1
+}
+
+variable "worker_max_instances" {
+  description = "Maximum number of n8n worker Cloud Run instances. Only used when enable_queue_mode = true."
+  type        = number
+  default     = 3
+}
+
+variable "worker_cpu" {
+  description = "CPU allocation for each n8n worker instance. Only used when enable_queue_mode = true."
+  type        = string
+  default     = "1"
+}
+
+variable "worker_memory" {
+  description = "Memory allocation for each n8n worker instance. Only used when enable_queue_mode = true."
+  type        = string
+  default     = "2Gi"
+}
