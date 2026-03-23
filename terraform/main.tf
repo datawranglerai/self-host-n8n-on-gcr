@@ -438,9 +438,16 @@ resource "google_cloud_run_v2_service" "n8n" {
         name  = "QUEUE_HEALTH_CHECK_ACTIVE"
         value = "true"
       }
-      env {
-        name  = "N8N_RUNNERS_ENABLED"
-        value = "true"
+      # Task runners: only needed when this process executes workflows.
+      # In queue mode the main service is UI/API/webhook only — workers execute.
+      # Enabling runners here causes n8n start to eagerly spawn a launcher
+      # process on boot, which crashes before the HTTP server can come up.
+      dynamic "env" {
+        for_each = var.enable_queue_mode ? [] : [1]
+        content {
+          name  = "N8N_RUNNERS_ENABLED"
+          value = "true"
+        }
       }
       env {
         name  = "N8N_PROXY_HOPS"

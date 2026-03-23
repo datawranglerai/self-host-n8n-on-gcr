@@ -578,7 +578,7 @@ gcloud run deploy n8n-worker \
 | `QUEUE_BULL_REDIS_PORT` | `6379` | `6379` | Redis port (Memorystore default) |
 | `QUEUE_BULL_REDIS_PASSWORD` | (from secret) | (from secret) | AUTH string stored in Secret Manager |
 | `QUEUE_HEALTH_CHECK_ACTIVE` | `true` | `true` | Exposes `/healthz` — required by Cloud Run health checks |
-| `N8N_RUNNERS_ENABLED` | `true` | `true` | Enables the task runner subsystem (required in n8n ≥ 1.x) |
+| `N8N_RUNNERS_ENABLED` | not set | `true` | Enables the task runner subsystem on workers. **Do not set this on the main service in queue mode** — the main process doesn't execute workflows, and setting it here causes n8n to crash at startup before the HTTP server can come up. |
 
 ### Scaling Workers ###
 
@@ -841,8 +841,16 @@ When things inevitably go sideways, here are the most common issues and how to f
 8. VPC Egress Causing Outbound Connectivity Issues:
 
     * The `private-ranges-only` egress setting routes only `10.x.x.x`, `172.16.x.x`, and `192.168.x.x` traffic through the VPC — all other traffic (including external API calls from your workflows) still uses the normal internet path, so this should not affect most workflows
-    
+
     * If you do see connectivity problems with external services, double-check that you used `private-ranges-only` and not `all-traffic`
+
+9. Main n8n Service Container Crashes at Startup (`exit(1)`) in Queue Mode:
+
+    * This happens when `N8N_RUNNERS_ENABLED=true` is set on the main service (`n8n start`) in queue mode. The main process is responsible only for the UI, API, and webhooks — it doesn't execute workflows. With that flag set, n8n eagerly starts a task runner launcher process on boot, which crashes before the HTTP server is ready. Cloud Run reports a health check failure, but the real problem is `exit(1)` in the application logs
+
+    * The fix: do not set `N8N_RUNNERS_ENABLED` on the main service. Workers need it (they run code). The main service does not
+
+    * To confirm the root cause, filter Cloud Logging for `run.googleapis.com/stdout` and `run.googleapis.com/stderr` on the failed revision — the exact crash message from n8n will be there, which is more informative than the Cloud Run system event
 
 ---
 
