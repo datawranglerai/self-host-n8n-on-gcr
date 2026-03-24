@@ -453,13 +453,25 @@ resource "google_cloud_run_v2_service" "n8n" {
         name  = "N8N_PROXY_HOPS"
         value = "1"
       }
-      # SSE avoids WebSocket upgrade issues on Cloud Run (HTTP/2 negotiation
-      # conflicts with WS HTTP/1.1 upgrades). With multiple instances and Redis
-      # already provisioned, n8n uses Redis pub/sub to fan-out push events to
-      # all instances, so every browser connection receives its events.
+      # Cloud Run intercepts /healthz at the load-balancer level before the
+      # request reaches the container, so n8n's own /healthz handler never runs
+      # and the browser always receives 404 → "Offline" badge. Moving the health
+      # endpoint to /health (or any path Cloud Run doesn't reserve) lets n8n
+      # serve it correctly. The frontend reads the configured path from the
+      # /rest/settings API response rather than hard-coding /healthz.
+      env {
+        name  = "N8N_ENDPOINT_HEALTH"
+        value = "/health"
+      }
+      # Revert to WebSocket push backend. SSE was tried to avoid HTTP/2/WebSocket
+      # upgrade conflicts on Cloud Run, but n8n 1.88.0+ validates the Origin header
+      # on push connections, and browsers do NOT send Origin on same-origin SSE/GET
+      # requests — only on WebSocket upgrades (required by the WS spec). This caused
+      # a 500 "Invalid origin!" on every SSE connection, blocking workflow execution.
+      # Cloud Run has supported WebSockets since 2023, so WS upgrade works correctly.
       env {
         name  = "N8N_PUSH_BACKEND"
-        value = "sse"
+        value = "websocket"
       }
       env {
         name = "N8N_ENCRYPTION_KEY"
