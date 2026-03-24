@@ -45,6 +45,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - "Could not connect to Redis" errors
   - VPC Egress causing outbound connectivity concerns
 
+### Fixed
+
+- **Main n8n Cloud Run service crashing at startup in Queue Mode** — `N8N_RUNNERS_ENABLED=true` was unconditionally set on the main service. In queue mode, `n8n start` eagerly initialises a task runner launcher process on boot; this launcher crashes before the HTTP server is ready, so Cloud Run receives `exit(1)` before the startup probe even fires. The fix makes this env var conditional: it is now only injected on the main service when `enable_queue_mode = false`. Workers retain `N8N_RUNNERS_ENABLED=true` since they are the processes that actually execute workflow code.
+
 ### Changed
 
 - **`README.md`** — Table of Contents updated to include Queue Mode Deployment and Cost Estimates links.
