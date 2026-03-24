@@ -453,6 +453,14 @@ resource "google_cloud_run_v2_service" "n8n" {
         name  = "N8N_PROXY_HOPS"
         value = "1"
       }
+      # SSE avoids WebSocket upgrade issues on Cloud Run (HTTP/2 negotiation
+      # conflicts with WS HTTP/1.1 upgrades). With multiple instances and Redis
+      # already provisioned, n8n uses Redis pub/sub to fan-out push events to
+      # all instances, so every browser connection receives its events.
+      env {
+        name  = "N8N_PUSH_BACKEND"
+        value = "sse"
+      }
       env {
         name = "N8N_ENCRYPTION_KEY"
         value_source {

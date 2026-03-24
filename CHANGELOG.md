@@ -47,6 +47,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **"Offline" indicator in n8n workflow builder on Cloud Run** — n8n defaults to `websocket` for its editor push connection. WebSocket upgrades (HTTP/1.1) conflict with Cloud Run's HTTP/2 negotiation, causing the connection to silently fail and the UI to show "Offline". With `max_instances = 2`, the absence of sticky session affinity compounds this: the browser's push channel can land on a different instance than the one receiving workflow events from workers. Fix: `N8N_PUSH_BACKEND=sse` is now set on the main Cloud Run service. SSE is a plain HTTP streaming GET that passes cleanly through Cloud Run's load balancer; with Redis already provisioned in queue mode, n8n uses Redis pub/sub to fan-out push events to all main service instances so every connected browser receives its events regardless of which instance handles the request.
+
 - **Main n8n Cloud Run service crashing at startup in Queue Mode** — `N8N_RUNNERS_ENABLED=true` was unconditionally set on the main service. In queue mode, `n8n start` eagerly initialises a task runner launcher process on boot; this launcher crashes before the HTTP server is ready, so Cloud Run receives `exit(1)` before the startup probe even fires. The fix makes this env var conditional: it is now only injected on the main service when `enable_queue_mode = false`. Workers retain `N8N_RUNNERS_ENABLED=true` since they are the processes that actually execute workflow code.
 
 ### Changed
