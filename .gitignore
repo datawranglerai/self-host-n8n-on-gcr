@@ -24,3 +24,12 @@ override.tf.json
 # Ignore CLI configuration files
 .terraformrc
 terraform.rc
+
+# AI extensions
+.claude/
+.cline/
+
+# Local IDE files
+.idea/
+.vscode/
+.DS_Store
