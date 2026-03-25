@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased] — Queue Mode Support
+## [3.1.0] — Queue Mode Support
 
 ### Added
 
