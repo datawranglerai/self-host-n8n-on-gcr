@@ -92,8 +92,25 @@ echo "Reading Terraform variables..."
 export GCP_REGION=$(read_and_display_var "gcp_region" "us-east1")
 export AR_REPO_NAME=$(read_and_display_var "artifact_repo_name" "n8n-repo")
 export SERVICE_NAME=$(read_and_display_var "cloud_run_service_name" "n8n")
-export ENABLE_LANGSMITH_OBSERVABILITY=$(read_terraform_var "enable_langsmith_observability" "false")
-export LANGSMITH_API_KEY_SECRET_NAME=$(read_terraform_var "langsmith_api_key_secret_name" "n8n-langsmith-api-key")
+
+ENABLE_LANGSMITH_OBSERVABILITY_FROM_TFVARS=$(read_terraform_var "enable_langsmith_observability" "")
+if [ -n "$ENABLE_LANGSMITH_OBSERVABILITY_FROM_TFVARS" ]; then
+    export ENABLE_LANGSMITH_OBSERVABILITY="$ENABLE_LANGSMITH_OBSERVABILITY_FROM_TFVARS"
+elif [ -n "$TF_VAR_enable_langsmith_observability" ]; then
+    export ENABLE_LANGSMITH_OBSERVABILITY="$TF_VAR_enable_langsmith_observability"
+else
+    export ENABLE_LANGSMITH_OBSERVABILITY="false"
+fi
+export ENABLE_LANGSMITH_OBSERVABILITY=$(printf '%s' "$ENABLE_LANGSMITH_OBSERVABILITY" | tr '[:upper:]' '[:lower:]')
+
+LANGSMITH_API_KEY_SECRET_NAME_FROM_TFVARS=$(read_terraform_var "langsmith_api_key_secret_name" "")
+if [ -n "$LANGSMITH_API_KEY_SECRET_NAME_FROM_TFVARS" ]; then
+    export LANGSMITH_API_KEY_SECRET_NAME="$LANGSMITH_API_KEY_SECRET_NAME_FROM_TFVARS"
+elif [ -n "$TF_VAR_langsmith_api_key_secret_name" ]; then
+    export LANGSMITH_API_KEY_SECRET_NAME="$TF_VAR_langsmith_api_key_secret_name"
+else
+    export LANGSMITH_API_KEY_SECRET_NAME="n8n-langsmith-api-key"
+fi
 
 export IMAGE_TAG="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPO_NAME}/${SERVICE_NAME}:latest"
 

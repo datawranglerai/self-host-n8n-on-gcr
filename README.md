@@ -1068,7 +1068,7 @@ After deployment:
 2. Run a simple workflow using the **AI Agent** node
 3. Open LangSmith and confirm traces are appearing in the configured project
 
-If you just created your LangSmith account and didn't set `langsmith_project`, the `default` project may only appear after the first trace is sent. So don't panic if the UI looks suspiciously empty for a minute.
+One important Terraform-specific detail: if you leave `langsmith_project` empty, this setup **doesn't** use LangSmith's `default` project. It derives a project name automatically from your n8n service name and GCP project ID instead. So if the LangSmith UI looks empty, double-check you're looking in the derived project rather than `default` before assuming the whole thing has exploded.
 
 ### Terraform Troubleshooting ###
 
