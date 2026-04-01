@@ -33,3 +33,5 @@ terraform.rc
 .idea/
 .vscode/
 .DS_Store
+
+.omx/

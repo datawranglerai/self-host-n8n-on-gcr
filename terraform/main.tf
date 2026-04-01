@@ -192,6 +192,10 @@ resource "google_secret_manager_secret_version" "encryption_key_secret_version" 
   secret_data = random_password.n8n_encryption_key.result
 }
 
+# --- LangSmith API key (optional) ---
+# The API key is expected to live in a pre-created Secret Manager secret so
+# it never passes through Terraform variables or state as a raw value.
+
 # --- Redis AUTH string (Queue Mode only) ---
 # Memorystore exposes the AUTH string after instance creation.
 # We store it in Secret Manager so neither the main service nor workers
@@ -237,6 +241,14 @@ resource "google_secret_manager_secret_iam_member" "encryption_key_secret_access
   member    = "serviceAccount:${google_service_account.n8n_sa.email}"
 }
 
+resource "google_secret_manager_secret_iam_member" "langsmith_api_key_secret_accessor" {
+  count     = var.enable_langsmith_observability ? 1 : 0
+  project   = var.gcp_project_id
+  secret_id = var.langsmith_api_key_secret_name
+  role      = "roles/secretmanager.secretAccessor"
+  member    = "serviceAccount:${google_service_account.n8n_sa.email}"
+}
+
 resource "google_project_iam_member" "sql_client" {
   project = var.gcp_project_id
   role    = "roles/cloudsql.client"
@@ -270,6 +282,10 @@ locals {
 
   # Canonical public URL constructed from the Cloud Run service name + project number
   n8n_public_url = "https://${var.cloud_run_service_name}-${data.google_project.project.number}.${var.gcp_region}.run.app"
+
+  # LangSmith project defaults to a deterministic name so traces from the main
+  # service and queue workers land in the same place unless overridden.
+  langsmith_project = var.langsmith_project != "" ? var.langsmith_project : "${var.cloud_run_service_name}-${var.gcp_project_id}"
 
   # Redis host — only resolved when queue mode is enabled
   redis_host = var.enable_queue_mode ? google_redis_instance.n8n_redis[0].host : ""
@@ -484,6 +500,52 @@ resource "google_cloud_run_v2_service" "n8n" {
       }
 
       # -----------------------------------------------------------------------
+      # LangSmith observability (optional)
+      # n8n documents LangSmith integration via environment variables.
+      # -----------------------------------------------------------------------
+
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name  = "LANGCHAIN_ENDPOINT"
+          value = var.langsmith_endpoint
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name  = "LANGCHAIN_TRACING_V2"
+          value = "true"
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name  = "LANGCHAIN_PROJECT"
+          value = local.langsmith_project
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name  = "LANGCHAIN_CALLBACKS_BACKGROUND"
+          value = tostring(var.langsmith_callbacks_background)
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name = "LANGCHAIN_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = var.langsmith_api_key_secret_name
+              version = "latest"
+            }
+          }
+        }
+      }
+
+      # -----------------------------------------------------------------------
       # Queue Mode — Redis connection (main process)
       # When EXECUTIONS_MODE=queue the main process handles the UI, API, and
       # webhook ingestion only. It enqueues execution jobs into Redis for
@@ -550,6 +612,7 @@ resource "google_cloud_run_v2_service" "n8n" {
     google_project_iam_member.sql_client,
     google_secret_manager_secret_iam_member.db_password_secret_accessor,
     google_secret_manager_secret_iam_member.encryption_key_secret_accessor,
+    google_secret_manager_secret_iam_member.langsmith_api_key_secret_accessor,
   ]
 }
 
@@ -731,6 +794,49 @@ resource "google_cloud_run_v2_service" "n8n_worker" {
         }
       }
 
+      # LangSmith must be present on workers in queue mode because workers run
+      # the actual AI workflow executions, including AI Agent LLM calls.
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name  = "LANGCHAIN_ENDPOINT"
+          value = var.langsmith_endpoint
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name  = "LANGCHAIN_TRACING_V2"
+          value = "true"
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name  = "LANGCHAIN_PROJECT"
+          value = local.langsmith_project
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name  = "LANGCHAIN_CALLBACKS_BACKGROUND"
+          value = tostring(var.langsmith_callbacks_background)
+        }
+      }
+      dynamic "env" {
+        for_each = var.enable_langsmith_observability ? [1] : []
+        content {
+          name = "LANGCHAIN_API_KEY"
+          value_source {
+            secret_key_ref {
+              secret  = var.langsmith_api_key_secret_name
+              version = "latest"
+            }
+          }
+        }
+      }
+
       startup_probe {
         initial_delay_seconds = 30
         timeout_seconds       = 240
@@ -753,6 +859,7 @@ resource "google_cloud_run_v2_service" "n8n_worker" {
     google_project_iam_member.sql_client,
     google_secret_manager_secret_iam_member.db_password_secret_accessor,
     google_secret_manager_secret_iam_member.encryption_key_secret_accessor,
+    google_secret_manager_secret_iam_member.langsmith_api_key_secret_accessor,
     google_secret_manager_secret_iam_member.redis_auth_secret_accessor,
     google_redis_instance.n8n_redis,
   ]

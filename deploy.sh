@@ -92,6 +92,8 @@ echo "Reading Terraform variables..."
 export GCP_REGION=$(read_and_display_var "gcp_region" "us-east1")
 export AR_REPO_NAME=$(read_and_display_var "artifact_repo_name" "n8n-repo")
 export SERVICE_NAME=$(read_and_display_var "cloud_run_service_name" "n8n")
+export ENABLE_LANGSMITH_OBSERVABILITY=$(read_terraform_var "enable_langsmith_observability" "false")
+export LANGSMITH_API_KEY_SECRET_NAME=$(read_terraform_var "langsmith_api_key_secret_name" "n8n-langsmith-api-key")
 
 export IMAGE_TAG="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPO_NAME}/${SERVICE_NAME}:latest"
 
@@ -111,7 +113,32 @@ echo "Project ID:   ${GCP_PROJECT_ID}"
 echo "Region:       ${GCP_REGION}"
 echo "Image Tag:    ${IMAGE_TAG}"
 echo "Repo Name:    ${AR_REPO_NAME}"
+echo "LangSmith:    ${ENABLE_LANGSMITH_OBSERVABILITY}"
 echo "---------------------"
+
+if [ "${ENABLE_LANGSMITH_OBSERVABILITY}" = "true" ]; then
+    echo "\n---> Checking LangSmith Secret Manager prerequisites..."
+
+    if ! gcloud secrets describe "${LANGSMITH_API_KEY_SECRET_NAME}" --project "${GCP_PROJECT_ID}" >/dev/null 2>&1; then
+        echo >&2 "LangSmith observability is enabled, but secret '${LANGSMITH_API_KEY_SECRET_NAME}' does not exist in project '${GCP_PROJECT_ID}'."
+        echo >&2 "Create it first, for example:"
+        echo >&2 "  echo -n 'lsv2_pt_your_api_key' | gcloud secrets create ${LANGSMITH_API_KEY_SECRET_NAME} --data-file=- --project ${GCP_PROJECT_ID}"
+        exit 1
+    fi
+
+    LANGSMITH_SECRET_VERSION=$(gcloud secrets versions list "${LANGSMITH_API_KEY_SECRET_NAME}" \
+        --project "${GCP_PROJECT_ID}" \
+        --filter="state=enabled" \
+        --limit=1 \
+        --format="value(name)" 2>/dev/null)
+
+    if [ -z "${LANGSMITH_SECRET_VERSION}" ]; then
+        echo >&2 "LangSmith observability is enabled, but secret '${LANGSMITH_API_KEY_SECRET_NAME}' has no enabled versions."
+        echo >&2 "Add one before deploying, for example:"
+        echo >&2 "  echo -n 'lsv2_pt_your_api_key' | gcloud secrets versions add ${LANGSMITH_API_KEY_SECRET_NAME} --data-file=- --project ${GCP_PROJECT_ID}"
+        exit 1
+    fi
+fi
 
 # --- Step 1: Ensure Artifact Registry Exists via Terraform --- #
 echo "\n---> Applying Terraform configuration for Artifact Registry..."

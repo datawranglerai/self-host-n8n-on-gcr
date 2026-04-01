@@ -11,6 +11,7 @@ This guide walks you through deploying n8n (that powerful workflow automation pl
 - [Manual Step-by-Step Guide](#step-1-set-up-your-google-cloud-project)
 - [Configuration](#step-8-configure-n8n-for-oauth-with-google-services)
 - [Queue Mode Deployment](#queue-mode-deployment-scaling-n8n-for-production)
+- [Optional LangSmith Observability](#optional-langsmith-observability-for-ai-agent-workflows)
 - [Updates & Maintenance](#keeping-n8n-updated-dont-be-that-person-running-year-old-software)
 - [Cost Estimates](#cost-estimates-yes-it-really-can-be-that-cheap)
 - [Troubleshooting](#troubleshooting)
@@ -967,6 +968,107 @@ echo 'enable_queue_mode = true' >> terraform.tfvars
 terraform plan   # Review what will be added
 terraform apply  # Apply the changes
 ```
+
+### Optional: LangSmith Observability for AI Agent Workflows ###
+
+If your main goal is to monitor **AI Agent** node usage, LangSmith is the cleanest fit for this repo because n8n already supports it via environment variables on the hosted instance. No custom sidecars, no weird proxy gymnastics, no turning your deployment into a science project.
+
+This Terraform setup supports **optional LangSmith observability** for n8n AI/LangChain-based workflows. When enabled, it injects the LangSmith environment variables into:
+
+- the main **n8n Cloud Run service**
+- the **n8n worker service** as well, when Queue Mode is enabled
+
+That worker coverage matters quite a lot. In Queue Mode, the worker is the process that actually runs workflows. So if you only wire LangSmith into the main service, your AI Agent executions can end up partially traced or missing from usage and cost records. Which is, obviously, not the vibe we're going for here.
+
+#### 1) Create the LangSmith API key secret in Secret Manager
+
+Get your LangSmith API key from:
+
+- `https://smith.langchain.com/settings`
+
+Then create a Secret Manager secret in your GCP project:
+
+```bash
+echo -n "lsv2_pt_your_api_key" | \
+  gcloud secrets create n8n-langsmith-api-key \
+  --data-file=- \
+  --project "$PROJECT_ID"
+```
+
+If the secret already exists, add a new version instead:
+
+```bash
+echo -n "lsv2_pt_your_api_key" | \
+  gcloud secrets versions add n8n-langsmith-api-key \
+  --data-file=- \
+  --project "$PROJECT_ID"
+```
+
+#### 2) Enable LangSmith in `terraform.tfvars`
+
+If you just want a sensible starting point for **AI Agent + Queue Mode + LangSmith**, use this:
+
+```hcl
+gcp_project_id = "your-project-id"
+gcp_region     = "us-west2"
+
+cloud_run_service_name = "n8n"
+
+# Queue Mode so executions run on workers
+enable_queue_mode = true
+worker_min_instances = 1
+worker_max_instances = 3
+
+# LangSmith observability
+enable_langsmith_observability = true
+langsmith_project              = "n8n-ai-agent-prod"
+langsmith_callbacks_background = true
+langsmith_api_key_secret_name  = "n8n-langsmith-api-key"
+```
+
+If you'd rather keep things minimal and only add the LangSmith bits, this is the smaller version:
+
+```hcl
+enable_langsmith_observability = true
+
+# Optional overrides
+langsmith_endpoint             = "https://api.smith.langchain.com"
+langsmith_project              = "n8n-prod"
+langsmith_callbacks_background = true
+langsmith_api_key_secret_name  = "n8n-langsmith-api-key"
+```
+
+Notes:
+
+- `langsmith_callbacks_background = true` is recommended for normal operation. This means traces can appear with a short delay, which is usually fine in production and keeps things nicely asynchronous.
+- If `langsmith_project` is left empty, Terraform derives a default project name from your n8n service name and GCP project ID.
+- The deployment script checks that the configured secret exists and has at least one version before deploying.
+
+#### 3) Deploy as usual
+
+```bash
+terraform plan -var-file=terraform.tfvars
+terraform apply -var-file=terraform.tfvars
+```
+
+If you're using Queue Mode too:
+
+```hcl
+enable_queue_mode              = true
+enable_langsmith_observability = true
+```
+
+This combination is what you want if your main concern is **complete AI Agent visibility**. It gives LangSmith access to the executions happening on worker instances, which is where your queued model calls, token usage, and cost records are actually produced.
+
+#### 4) Verify traces
+
+After deployment:
+
+1. Restart/redeploy n8n if needed so the updated environment is active
+2. Run a simple workflow using the **AI Agent** node
+3. Open LangSmith and confirm traces are appearing in the configured project
+
+If you just created your LangSmith account and didn't set `langsmith_project`, the `default` project may only appear after the first trace is sent. So don't panic if the UI looks suspiciously empty for a minute.
 
 ### Terraform Troubleshooting ###
 

@@ -31,6 +31,27 @@
 # generic_timezone         = "UTC"
 
 # ===========================================================================
+# LangSmith observability (optional)
+# ===========================================================================
+# Focused on n8n AI/LangChain-based workflows such as the AI Agent node.
+# Create the Secret Manager secret and at least one secret version before
+# setting enable_langsmith_observability = true.
+#
+# Example:
+#   echo -n "lsv2_pt_your_api_key" | \
+#     gcloud secrets create n8n-langsmith-api-key --data-file=-
+#
+# If the secret already exists, add/update a version instead:
+#   echo -n "lsv2_pt_your_api_key" | \
+#     gcloud secrets versions add n8n-langsmith-api-key --data-file=-
+#
+# enable_langsmith_observability = false
+# langsmith_endpoint             = "https://api.smith.langchain.com"
+# langsmith_project              = ""    # Leave empty to auto-name the project
+# langsmith_callbacks_background = true  # Async uploads; traces may appear slightly delayed
+# langsmith_api_key_secret_name  = "n8n-langsmith-api-key"
+
+# ===========================================================================
 # Queue Mode — set enable_queue_mode = true to activate
 # ===========================================================================
 # Queue Mode separates workflow execution from the main UI/API process.

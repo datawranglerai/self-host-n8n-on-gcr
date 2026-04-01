@@ -88,6 +88,56 @@ variable "generic_timezone" {
 }
 
 # ---------------------------------------------------------------------------
+# LangSmith observability (optional)
+# Focused on n8n AI/LangChain-based workflows such as AI Agent executions.
+# ---------------------------------------------------------------------------
+
+variable "enable_langsmith_observability" {
+  description = <<-EOT
+    Set to true to enable LangSmith tracing for n8n AI/LangChain-based runs.
+    This is especially useful for observing AI Agent node executions, token
+    usage, and model costs. Requires a pre-created Secret Manager secret
+    containing the LangSmith API key.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "langsmith_endpoint" {
+  description = "LangSmith API endpoint."
+  type        = string
+  default     = "https://api.smith.langchain.com"
+}
+
+variable "langsmith_project" {
+  description = <<-EOT
+    Optional LangSmith project name. Leave empty to derive a default project
+    name from the Cloud Run service and GCP project.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "langsmith_callbacks_background" {
+  description = <<-EOT
+    Whether LangSmith uploads traces asynchronously. Leave true for normal
+    operation. Set false only when you want synchronous uploads for debugging.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "langsmith_api_key_secret_name" {
+  description = <<-EOT
+    Name of the pre-created Secret Manager secret holding the LangSmith API
+    key. The secret must already exist and contain at least one enabled
+    version before enabling LangSmith observability.
+  EOT
+  type        = string
+  default     = "n8n-langsmith-api-key"
+}
+
+# ---------------------------------------------------------------------------
 # Queue Mode variables
 # These are only required when enable_queue_mode = true.
 # ---------------------------------------------------------------------------
