@@ -282,7 +282,7 @@ gcloud run deploy n8n \
     --min-instances=0 \
     --max-instances=1 \
     --no-cpu-throttling \
-    --set-env-vars="N8N_PORT=5678,N8N_PROTOCOL=https,DB_TYPE=postgresdb,DB_POSTGRESDB_DATABASE=n8n,DB_POSTGRESDB_USER=n8n-user,DB_POSTGRESDB_HOST=/cloudsql/$SQL_CONNECTION,DB_POSTGRESDB_PORT=5432,DB_POSTGRESDB_SCHEMA=public,N8N_USER_FOLDER=/home/node/.n8n,GENERIC_TIMEZONE=UTC,QUEUE_HEALTH_CHECK_ACTIVE=true" \
+    --set-env-vars="N8N_PORT=5678,N8N_PROTOCOL=https,DB_TYPE=postgresdb,DB_POSTGRESDB_DATABASE=n8n,DB_POSTGRESDB_USER=n8n-user,DB_POSTGRESDB_HOST=/cloudsql/$SQL_CONNECTION,DB_POSTGRESDB_PORT=5432,DB_POSTGRESDB_SCHEMA=public,N8N_USER_FOLDER=/home/node/.n8n,GENERIC_TIMEZONE=UTC,QUEUE_HEALTH_CHECK_ACTIVE=true,N8N_ENDPOINT_HEALTH=health" \
     --set-secrets="DB_POSTGRESDB_PASSWORD=n8n-db-password:latest,N8N_ENCRYPTION_KEY=n8n-encryption-key:latest" \
     --add-cloudsql-instances=$SQL_CONNECTION \
     --service-account=n8n-service-account@$PROJECT_ID.iam.gserviceaccount.com
@@ -303,7 +303,7 @@ gcloud run deploy n8n \
     --min-instances=0 \
     --max-instances=1 \
     --no-cpu-throttling \
-    --set-env-vars="N8N_PATH=/,N8N_PORT=443,N8N_PROTOCOL=https,DB_TYPE=postgresdb,DB_POSTGRESDB_DATABASE=n8n,DB_POSTGRESDB_USER=n8n-user,DB_POSTGRESDB_HOST=/cloudsql/$SQL_CONNECTION,DB_POSTGRESDB_PORT=5432,DB_POSTGRESDB_SCHEMA=public,N8N_USER_FOLDER=/home/node,EXECUTIONS_PROCESS=main,EXECUTIONS_MODE=regular,GENERIC_TIMEZONE=UTC,QUEUE_HEALTH_CHECK_ACTIVE=true" \
+    --set-env-vars="N8N_PATH=/,N8N_PORT=443,N8N_PROTOCOL=https,DB_TYPE=postgresdb,DB_POSTGRESDB_DATABASE=n8n,DB_POSTGRESDB_USER=n8n-user,DB_POSTGRESDB_HOST=/cloudsql/$SQL_CONNECTION,DB_POSTGRESDB_PORT=5432,DB_POSTGRESDB_SCHEMA=public,N8N_USER_FOLDER=/home/node,EXECUTIONS_PROCESS=main,EXECUTIONS_MODE=regular,GENERIC_TIMEZONE=UTC,QUEUE_HEALTH_CHECK_ACTIVE=true,N8N_ENDPOINT_HEALTH=health" \
     --set-secrets="DB_POSTGRESDB_PASSWORD=n8n-db-password:latest,N8N_ENCRYPTION_KEY=n8n-encryption-key:latest" \
     --add-cloudsql-instances=$SQL_CONNECTION \
     --service-account=n8n-service-account@$PROJECT_ID.iam.gserviceaccount.com
@@ -344,6 +344,7 @@ Here's what all those environment variables do:
 | EXECUTIONS_PROCESS        | Not needed          | main (deprecated)   | Deprecated - remove in newer versions                                        |
 | EXECUTIONS_MODE           | Not needed          | regular (deprecated)| Deprecated - remove in newer versions                                        |
 | QUEUE_HEALTH_CHECK_ACTIVE | true                | true                | Critical for Cloud Run to verify container health                            |
+| N8N_ENDPOINT_HEALTH       | health              | health              | Renames the health endpoint from `/healthz` to `/health`. Required on Cloud Run because GCP intercepts all `/healthz` requests at the load-balancer level, returning 404 before the request reaches your container (causing the "Offline" badge in the editor). See [n8n issue #25656](https://github.com/n8n-io/n8n/issues/25656). |
 
 
 Pay special attention to DB_TYPE. It must be "postgresdb" not "postgresql" - a quirk that's caused many deployment headaches. And don't explicitly set the PORT variable as Cloud Run injects this automatically.
@@ -577,7 +578,8 @@ gcloud run deploy n8n-worker \
 | `QUEUE_BULL_REDIS_HOST` | Redis private IP | Redis private IP | Host of the Memorystore instance |
 | `QUEUE_BULL_REDIS_PORT` | `6379` | `6379` | Redis port (Memorystore default) |
 | `QUEUE_BULL_REDIS_PASSWORD` | (from secret) | (from secret) | AUTH string stored in Secret Manager |
-| `QUEUE_HEALTH_CHECK_ACTIVE` | `true` | `true` | Exposes `/healthz` — required by Cloud Run health checks |
+| `QUEUE_HEALTH_CHECK_ACTIVE` | `true` | `true` | Exposes the health endpoint — required by Cloud Run health checks. The path is controlled by `N8N_ENDPOINT_HEALTH` (see below). |
+| `N8N_ENDPOINT_HEALTH` | `health` | `health` | Path for the health endpoint. Set to `health` (not `healthz`) because Cloud Run intercepts `/healthz` at the load-balancer level. |
 | `N8N_RUNNERS_ENABLED` | not set | `true` | Enables the task runner subsystem on workers. **Do not set this on the main service in queue mode** — the main process doesn't execute workflows, and setting it here causes n8n to crash at startup before the HTTP server can come up. |
 
 ### Scaling Workers ###
@@ -844,7 +846,21 @@ When things inevitably go sideways, here are the most common issues and how to f
 
     * If you do see connectivity problems with external services, double-check that you used `private-ranges-only` and not `all-traffic`
 
-9. Main n8n Service Container Crashes at Startup (`exit(1)`) in Queue Mode:
+9. Workflow Editor Shows "Offline" Badge (n8n v2.7.0+):
+
+    * Starting with n8n v2.7.0, the browser polls the `/healthz` endpoint to determine whether the server is reachable. Google Cloud Run intercepts all requests to paths ending in `z` (such as `/healthz`, `/livez`, `/readyz`) at the load-balancer level before they reach your container, returning 404. The browser then treats every health check as a failed connection and permanently shows the "Offline" badge, preventing workflow editing.
+
+    * The fix: set `N8N_ENDPOINT_HEALTH=health` on your Cloud Run service. This tells n8n to expose its health check at `/health` instead of `/healthz`, which Cloud Run does not intercept.
+
+    ```bash
+    gcloud run services update n8n \
+        --region=$REGION \
+        --update-env-vars="N8N_ENDPOINT_HEALTH=health"
+    ```
+
+    * If you deployed using the commands in this guide after this note was added, this variable is already included. See [n8n issue #25656](https://github.com/n8n-io/n8n/issues/25656) for full background.
+
+10. Main n8n Service Container Crashes at Startup (`exit(1)`) in Queue Mode:
 
     * This happens when `N8N_RUNNERS_ENABLED=true` is set on the main service (`n8n start`) in queue mode. The main process is responsible only for the UI, API, and webhooks — it doesn't execute workflows. With that flag set, n8n eagerly starts a task runner launcher process on boot, which crashes before the HTTP server is ready. Cloud Run reports a health check failure, but the real problem is `exit(1)` in the application logs
 
